@@ -1,0 +1,179 @@
+---
+title: "HW3"
+format: html
+editor: visual
+---
+
+## Task 1: Conceptual Questions
+
+1.  If your working directory is myfolder/homework/, what relative path would you specify to get the file located at myfolder/MyData.csv?
+
+    > ../MyData.csv
+
+2.  What are the major benefits of using R projects?
+
+    > Uisng R project, we could 1) keep all datasets and scripts in one directory; 2)set the working directory automatically to this project directory every time you open the project; 3) track changes to your scripts using Git, making it easy to collaborate with others; 4) document your analysis process using R Markdown and keep the documentation within the project. Overall, using R projects leads to a more organized, reproducible, and collaborative workflow, which is particularly beneficial for complex data analysis tasks and team-based projects.
+
+3.  What is git and what is github?
+
+    > Git is a distributed version control system designed to handle everything from small to very large projects with speed and efficiency. GitHub is a web-based platform that leverages the capabilities of Git to provide a suite of tools for collaborative software development and version control.
+
+4.  What are the two main differences between a tibble and a data.frame?
+
+    > 1\) Printing behavior
+    >
+    > 2\) Subsetting
+
+5.  Rewrite the following nested function call using baseR’s chaining operator: arrange(filter(select(as_tibble(iris), starts_with("Petal"), Species), Petal.Length \< 1.55), Species)
+
+    > iris \|\> as_tibble() \|\> select(starts_with("Petal"), Species) \|\> filter(Petal.Length \< 1.55) \|\> arrange(Species)
+
+6.  What is meant by long format data and wide format data? Which do we generally prefer for statistical analysis?
+
+    > In long format data, each row represents a single observation, and multiple measurements or time points for the same subject are represented as multiple rows.
+    >
+    > In wide format data, each row represents a single subject, and multiple measurements or time points for the same subject are represented as different columns.
+    >
+    > Long format data is generally preferred for statistical analysis due to its flexibility and compatibility with many analysis and visualization tools. It allows for easier handling of complex data structures such as repeated measures and time series, making it a more versatile choice for a wide range of statistical tasks.
+
+## Task 2 Reading Delimited Data
+
+Glass data
+
+```{r}
+library(tidyverse)
+#read in data
+glass <- read_delim("https://www4.stat.ncsu.edu/~online/datasets/glass.data", 
+                       delim = ",",
+                       col_names = c("ID", "RI", "Na", "Mg", "Al", "Si", "K", "Ca", "Ba", "Fe", "Type")
+)
+
+# print tibble 
+glass
+
+# overwrite last column and select observations
+glass |> 
+  mutate(Type = case_when(
+                        Type == 1 ~ "building_windows_float_processed",
+                        Type == 2 ~ "building_windows_non_float_processed",
+                        Type == 3 ~ "vehicle_windows_float_processed",
+                        Type == 4 ~ "vehicle_windows_non_float_processed
+(none in this database)",
+                        Type == 5 ~ "containers",
+                        Type == 6 ~ "tableware",
+                        Type == 7 ~ "headlamps",
+ ) 
+) |> 
+  filter (Fe < 0.2 | Type %in% c("tableware", "headlamp")) |>
+  print(n=50)
+```
+
+Yeast data
+
+```{r}
+#read in data
+yeast <- read_table("https://www4.stat.ncsu.edu/~online/datasets/yeast.data",
+                       col_names = c("seq_name", "mcg", "gvh", "alm", "mit", "erl", "pox", "vac", "nuc", "class")
+)
+
+# print tibble 
+yeast
+
+# overwrite last column and select observations
+yeast |>
+  select(-c(seq_name, nuc)) |>
+  group_by(class) |>
+  mutate(across(where(is.numeric), mean, .names = "mean_{.col}")) |>
+  print(n=50)
+```
+
+## Task 3: Combining Excel and Delimited Data
+
+```{r}
+library(readxl)
+# read in white wine dataset
+white_wine <- read_excel("white-wine.xlsx")
+white_wine
+
+# read in col names
+col_name <- read_excel("white-wine.xlsx", 
+                            sheet = excel_sheets("white-wine.xlsx")[2])
+col_name
+
+# overwrite the current column names
+colnames(white_wine) <- col_name$Variables
+
+# add a new column
+white_wine <- white_wine |>
+  mutate(type = "white")
+
+# read in red wine dataset
+red_wine <- read_csv2("https://www4.stat.ncsu.edu/~online/datasets/red-wine.csv", col_names = TRUE, col_types = cols(.default = "n"))
+
+# overwrite the current column names
+colnames(red_wine) <- col_name$Variables
+
+
+# add a new column
+red_wine <- red_wine |>
+  mutate(type = "red")
+
+# combine two datasets
+wine <- bind_rows(white_wine, red_wine)
+
+# filter, select and add new stats columns
+wine |>
+  filter(quality > 6.5 | alcohol < 132) |>
+  arrange(desc(quality)) |>
+  group_by(quality) |>
+  mutate(alcohol_mean = mean(alcohol), alcohol_std = sd(alcohol)) |>
+  print(n=50)
+  
+```
+
+## Task 4: Database Practice
+
+```{r}
+library(DBI)
+#connect to database
+con <- dbConnect(RSQLite::SQLite(), "lahman.db")
+
+#list all tables
+dbListTables(con)
+
+# return Teams table for for 2025 use tbl()
+tbl(con, "Teams") |>
+  filter(yearID == 2015)
+
+# redo above using sql()
+tbl(con, sql(
+  "SELECT * FROM 'TEAMS'
+   WHERE (`yearID` = 2015)")
+  )
+
+# return hall of frame
+tbl(con, 'HallOfFame') |>
+  filter(inducted == "Y") |>
+  select(playerID, yearID, category) |>
+  collect()
+
+# combine with People table to get name
+dat1 <- inner_join(tbl(con, 'HallOfFame') |> filter(inducted == "Y") |> select(playerID, yearID, category), 
+           tbl(con, 'People') |> select(playerID, nameFirst, nameLast),
+           by = join_by(playerID == playerID)) |>
+  collect()
+
+# return Managers table
+dat2 <- tbl(con, "Managers") |>
+  select(playerID, G, W, L) |>
+  group_by(playerID) |>
+  summarize(G_managed = sum(G, na.rm = TRUE),
+            Total_W = sum(W, na.rm = TRUE),
+            Total_L = sum(L, na.rm = TRUE)) |>
+  collect() |>
+  mutate(win_percent = Total_W/G_managed) |>
+  arrange(desc(Total_W/G_managed))
+
+# join dat1 and dat2
+inner_join(dat1, dat2, by = join_by(playerID == playerID))
+```
